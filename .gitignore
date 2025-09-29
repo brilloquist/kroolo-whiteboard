@@ -21,3 +21,26 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+
+# Environment files
+.env.local
+.env.production
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Supabase
+.supabase/
