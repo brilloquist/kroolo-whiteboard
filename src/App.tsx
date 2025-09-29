@@ -1,28 +1,128 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layers3, Eye, EyeOff, Mail } from 'lucide-react';
+import { supabase } from './lib/supabase';
+import Dashboard from './components/dashboard/Dashboard';
 
 const App = () => {
-  const [email, setEmail] = React.useState('');
-  const [password, setPassword] = React.useState('');
-  const [showPassword, setShowPassword] = React.useState(false);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [domain, setDomain] = useState(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
 
-  const handleSignIn = async (e: React.FormEvent) => {
+  useEffect(() => {
+    // Check if user is already logged in
+    const checkAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          setUser(session.user);
+          await loadUserProfile(session.user.id);
+        }
+      } catch (error) {
+        console.error('Error checking auth:', error);
+      } finally {
+        setCheckingAuth(false);
+      }
+    };
+
+    checkAuth();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        setUser(session.user);
+        await loadUserProfile(session.user.id);
+      } else {
+        setUser(null);
+        setProfile(null);
+        setDomain(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const loadUserProfile = async (userId) => {
+    try {
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select(`
+          *,
+          domains (*)
+        `)
+        .eq('id', userId)
+        .single();
+
+      if (profileError) {
+        console.error('Error loading profile:', profileError);
+        return;
+      }
+
+      setProfile(profileData);
+      setDomain(profileData.domains);
+    } catch (error) {
+      console.error('Error in loadUserProfile:', error);
+    }
+  };
+
+  const handleSignIn = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
     try {
-      // TODO: Add actual sign in logic
-      console.log('Sign in with:', email, password);
-    } catch (error: any) {
-      setError(error.message || 'Sign in failed');
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      // User will be set via the auth state change listener
+    } catch (error) {
+      console.error('Sign in error:', error);
+      if (error.message === 'Invalid login credentials') {
+        setError('Invalid email or password. Please check your credentials.');
+      } else {
+        setError(error.message || 'Sign in failed');
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setProfile(null);
+    setDomain(null);
+    setEmail('');
+    setPassword('');
+    setError('');
+  };
+
+  // Show loading while checking authentication
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-white">Loading...</div>
+      </div>
+    );
+  }
+
+  // Show dashboard if authenticated
+  if (user && profile && domain) {
+    return <Dashboard profile={profile} domain={domain} onSignOut={handleSignOut} />;
+  }
+
+  // Show login form
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 flex items-center justify-center px-4">
       <div className="max-w-md w-full">
