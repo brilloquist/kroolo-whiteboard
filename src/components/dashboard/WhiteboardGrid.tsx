@@ -1,172 +1,157 @@
 import React, { useState } from 'react';
-import { Layers3, Eye, EyeOff, Mail, User, Building } from 'lucide-react';
+import { Plus, MoreVertical, Users, Calendar, Layout } from 'lucide-react';
+import { Avatar } from '../ui/Avatar';
+import { AvatarList } from '../ui/AvatarList';
 
-interface AuthPageProps {
+interface Whiteboard {
+  id: string;
+  title: string;
+  description?: string;
+  owner_id: string;
+  updated_at: string;
+  owner?: {
+    full_name: string;
+    avatar_url?: string;
+  };
+  collaborators?: Array<{
+    id: string;
+    full_name: string;
+    avatar_url?: string;
+  }>;
 }
 
-const AuthPage = ({ domain }: AuthPageProps) => {
-  const { setSelectedDomain } = useAuth();
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-    setError('');
+interface WhiteboardGridProps {
+  whiteboards: Whiteboard[];
+  onCreateWhiteboard: () => void;
+  onShareWhiteboard: (whiteboardId: string) => void;
+  onDeleteWhiteboard: (whiteboardId: string) => void;
+  loading?: boolean;
+}
 
-    try {
-      // Validate email domain matches selected domain (unless creating new)
-      if (!isNewDomain) {
-        const emailDomain = email.split('@')[1];
-        if (emailDomain !== domain) {
-          throw new Error(`Email must be from @${domain} domain`);
-        }
-      }
+const WhiteboardGrid = ({
+  whiteboards,
+  onCreateWhiteboard,
+  onShareWhiteboard,
+  onDeleteWhiteboard,
+  loading = false
+}: WhiteboardGridProps) => {
+  const [menuOpen, setMenuOpen] = useState<string | null>(null);
 
-      // Step 1: Create auth user
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-      });
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
 
-      if (authError) throw authError;
-      if (!authData.user) throw new Error('No user created');
-
-      // Step 2: Call edge function to create company and profile
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-company`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({
-          domain: isNewDomain ? email.split('@')[1] : domain,
-          displayName: isNewDomain ? companyName : domain,
-          userEmail: email,
-          userId: authData.user.id,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create company');
-      }
-
-      // Step 3: Sign in the user
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (signInError) throw signInError;
-
-    } catch (error: any) {
-      console.error('Sign up error:', error);
-      if (error.message === 'User already registered') {
-        setError('This email is already registered. Please switch to the "Sign In" tab.');
-      } else {
-        setError(error.message || 'Sign up failed');
-      }
-    } finally {
-      setLoading(false);
+    if (diffInHours < 24) {
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } else if (diffInHours < 24 * 7) {
+      return date.toLocaleDateString([], { weekday: 'short' });
+    } else {
+      return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
     }
   };
 
-  const handleSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) throw error;
-
-    } catch (error: any) {
-      console.error('Sign in error:', error);
-      if (error.message === 'Invalid login credentials') {
-        setError('Invalid email or password. Please check your credentials or create an account if you haven\'t already.');
-      } else {
-        setError(error.message || 'Sign in failed');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+  if (loading) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        {[...Array(8)].map((_, i) => (
+          <div key={i} className="bg-gray-800 rounded-lg border border-gray-700 p-6 animate-pulse">
+            <div className="h-4 bg-gray-700 rounded mb-4"></div>
+            <div className="h-3 bg-gray-700 rounded mb-2"></div>
+            <div className="h-3 bg-gray-700 rounded w-2/3"></div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-      <div className="max-w-md w-full">
-        {/* Logo and Header */}
-        <div className="text-center mb-8">
-          <button
-            onClick={() => setSelectedDomain(null)}
-            className="mb-4 text-blue-300 hover:text-blue-200 text-sm transition-colors"
-          className="bg-gray-800 rounded-lg border border-gray-700 hover:border-gray-600 transition-all duration-200 hover:shadow-lg group cursor-pointer"
-            ← Back to domain selection
-          </button>
-          <div className="flex items-center justify-center mb-6">
-            <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-2xl">
-              <Layout className="h-8 w-8 text-white opacity-60" />
-            </div>
-          </div>
-          <h1 className="text-4xl font-bold text-white mb-2">kroolo</h1>
-          <p className="text-gray-300 text-lg">
-            {isSignUp 
-              ? (isNewDomain ? 'Create your workspace' : `Join ${domain}`)
-              : `Sign in to ${domain === 'new' ? 'your workspace' : domain}`
-            }
-          </p>
+      {/* Create New Whiteboard Card */}
+      <button
+        onClick={onCreateWhiteboard}
+        className="bg-gray-800 rounded-lg border-2 border-dashed border-gray-600 hover:border-blue-500 transition-all duration-200 p-6 flex flex-col items-center justify-center min-h-[200px] group"
+      >
+        <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center mb-4 group-hover:bg-blue-500 transition-colors">
+          <Plus className="h-6 w-6 text-white" />
         </div>
+        <h3 className="text-white font-medium mb-2">Create Whiteboard</h3>
+        <p className="text-gray-400 text-sm text-center">
+          Start a new collaborative whiteboard
+        </p>
+      </button>
 
-        {/* Form Card */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 shadow-2xl border border-white/20">
-          <form onSubmit={isSignUp ? handleSignUp : handleSignIn} className="space-y-6">
-            {error && (
-              <div className="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded-lg text-sm">
-                {error}
+      {/* Whiteboard Cards */}
+      {whiteboards.map((whiteboard) => (
+        <div
+          key={whiteboard.id}
+          className="bg-gray-800 rounded-lg border border-gray-700 hover:border-gray-600 transition-all duration-200 hover:shadow-lg group cursor-pointer"
+        >
+          <div className="p-6">
+            {/* Header with menu */}
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex-1 min-w-0">
+                <h3 className="text-white font-medium truncate mb-1">
+                  {whiteboard.title}
+                </h3>
+                {whiteboard.description && (
+                  <p className="text-gray-400 text-sm line-clamp-2">
+                    {whiteboard.description}
+                  </p>
+                )}
               </div>
-            )}
-
-            {isSignUp && (
-              <>
-                <div className="space-y-2">
-                  <label className="text-white text-sm font-medium flex items-center space-x-2">
-                    <User className="h-4 w-4" />
-                    <span>Full Name</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
-                    placeholder="John Doe"
-                  />
-                </div>
-
-                {isNewDomain && (
-                  <div className="space-y-2">
-                    <label className="text-white text-sm font-medium flex items-center space-x-2">
-                      <Building className="h-4 w-4" />
-                      <span>Company Name</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={companyName}
-                      onChange={(e) => setCompanyName(e.target.value)}
-                      className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
-                      placeholder="Acme Corporation"
-                    />
+              <div className="relative ml-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuOpen(menuOpen === whiteboard.id ? null : whiteboard.id);
+                  }}
+                  className="p-1 text-gray-400 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </button>
+                
+                {menuOpen === whiteboard.id && (
+                  <div className="absolute right-0 top-8 bg-gray-700 border border-gray-600 rounded-lg shadow-lg py-1 z-10 min-w-[120px]">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onShareWhiteboard(whiteboard.id);
+                        setMenuOpen(null);
+                      }}
+                      className="w-full px-3 py-2 text-left text-sm text-gray-300 hover:bg-gray-600 hover:text-white flex items-center"
+                    >
+                      <Users className="h-4 w-4 mr-2" />
+                      Share
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteWhiteboard(whiteboard.id);
+                        setMenuOpen(null);
+                      }}
+                      className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-gray-600 hover:text-red-300 flex items-center"
+                    >
+                      <Layout className="h-4 w-4 mr-2" />
+                      Delete
+                    </button>
                   </div>
                 )}
-              </>
-            )}
+              </div>
+            </div>
 
-            <div className="space-y-2">
+            {/* Collaborators */}
+            <div className="mb-3">
+              <AvatarList
+                users={whiteboard.collaborators || []}
+                maxVisible={3}
+                size="sm"
+                onClick={() => onShareWhiteboard(whiteboard.id)}
+              />
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between text-xs">
               <div className="flex-1 min-w-0">
                 <div className="text-gray-500 text-xs truncate">
                   {whiteboard.owner?.full_name}
@@ -175,31 +160,12 @@ const AuthPage = ({ domain }: AuthPageProps) => {
                   {formatDate(whiteboard.updated_at)}
                 </div>
               </div>
-              </label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
-                placeholder={isNewDomain ? "john@company.com" : `john@${domain}`}
-                <div className="relative ml-2">
-              {!isNewDomain && (
-                <p className="text-gray-400 text-sm">
-                  Must be an @{domain} email address
-                </p>
-              )}
             </div>
-
-            <div className="space-y-2">
-              <div className="mb-3">
-                <AvatarList
-                  users={whiteboard.collaborators}
-                  maxVisible={3}
-                  size="sm"
-                  onClick={() => onShare(whiteboard.id)}
-                />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 };
 
-export default AuthPage;
+export default WhiteboardGrid;
