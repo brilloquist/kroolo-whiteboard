@@ -1,27 +1,74 @@
 import React, { useState, useEffect } from 'react';
-import { Layers3, Eye, EyeOff, Mail, LogOut } from 'lucide-react';
+import { Layers3, Eye, EyeOff, Mail } from 'lucide-react';
 import { supabase } from './lib/supabase';
+import Dashboard from './components/dashboard/Dashboard';
 
 const App = () => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [domain, setDomain] = useState(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
 
-  // Check if user is already logged in
   useEffect(() => {
+    // Check if user is already logged in
     const checkAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        setIsAuthenticated(true);
-        setUser(session.user);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          setUser(session.user);
+          await loadUserProfile(session.user.id);
+        }
+      } catch (error) {
+        console.error('Error checking auth:', error);
+      } finally {
+        setCheckingAuth(false);
       }
     };
+
     checkAuth();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        setUser(session.user);
+        await loadUserProfile(session.user.id);
+      } else {
+        setUser(null);
+        setProfile(null);
+        setDomain(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
+
+  const loadUserProfile = async (userId) => {
+    try {
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select(`
+          *,
+          domains (*)
+        `)
+        .eq('id', userId)
+        .single();
+
+      if (profileError) {
+        console.error('Error loading profile:', profileError);
+        return;
+      }
+
+      setProfile(profileData);
+      setDomain(profileData.domains);
+    } catch (error) {
+      console.error('Error in loadUserProfile:', error);
+    }
+  };
 
   const handleSignIn = async (e) => {
     e.preventDefault();
@@ -38,13 +85,14 @@ const App = () => {
         throw error;
       }
 
-      if (data.user) {
-        setIsAuthenticated(true);
-        setUser(data.user);
-      }
+      // User will be set via the auth state change listener
     } catch (error) {
       console.error('Sign in error:', error);
-      setError('Invalid email or password. Please check your credentials.');
+      if (error.message === 'Invalid login credentials') {
+        setError('Invalid email or password. Please check your credentials.');
+      } else {
+        setError(error.message || 'Sign in failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -52,80 +100,29 @@ const App = () => {
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
-    setIsAuthenticated(false);
     setUser(null);
+    setProfile(null);
+    setDomain(null);
     setEmail('');
     setPassword('');
     setError('');
   };
 
-  // Dashboard Component
-  if (isAuthenticated) {
+  // Show loading while checking authentication
+  if (checkingAuth) {
     return (
-      <div className="min-h-screen bg-gray-900">
-        {/* Header */}
-        <div className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Layers3 className="h-8 w-8 text-blue-500" />
-              <h1 className="text-2xl font-bold text-white">kroolo Dashboard</h1>
-            </div>
-            <button
-              onClick={handleSignOut}
-              className="flex items-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
-            >
-              <LogOut className="h-4 w-4" />
-              <span>Sign Out</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Dashboard Content */}
-        <div className="p-8">
-          <div className="max-w-4xl mx-auto">
-            <div className="bg-gray-800 rounded-lg p-8 border border-gray-700">
-              <h2 className="text-3xl font-bold text-white mb-4">Welcome to kroolo!</h2>
-              <p className="text-gray-300 text-lg mb-6">
-                You have successfully signed in to your dashboard.
-              </p>
-              
-              <div className="bg-gray-700 rounded-lg p-6">
-                <h3 className="text-xl font-semibold text-white mb-3">User Information</h3>
-                <div className="space-y-2">
-                  <p className="text-gray-300">
-                    <span className="font-medium">Email:</span> {user?.email}
-                  </p>
-                  <p className="text-gray-300">
-                    <span className="font-medium">User ID:</span> {user?.id}
-                  </p>
-                  <p className="text-gray-300">
-                    <span className="font-medium">Last Sign In:</span> {new Date(user?.last_sign_in_at).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-blue-600 rounded-lg p-6 text-center">
-                  <h4 className="text-white font-semibold text-lg mb-2">Whiteboards</h4>
-                  <p className="text-blue-100">Create and manage your whiteboards</p>
-                </div>
-                <div className="bg-green-600 rounded-lg p-6 text-center">
-                  <h4 className="text-white font-semibold text-lg mb-2">Teams</h4>
-                  <p className="text-green-100">Collaborate with your team</p>
-                </div>
-                <div className="bg-purple-600 rounded-lg p-6 text-center">
-                  <h4 className="text-white font-semibold text-lg mb-2">Projects</h4>
-                  <p className="text-purple-100">Manage your projects</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-white">Loading...</div>
       </div>
     );
   }
 
-  // Login Page
+  // Show dashboard if authenticated
+  if (user && profile && domain) {
+    return <Dashboard profile={profile} domain={domain} onSignOut={handleSignOut} />;
+  }
+
+  // Show login form
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 flex items-center justify-center px-4">
       <div className="max-w-md w-full">
@@ -137,7 +134,9 @@ const App = () => {
             </div>
           </div>
           <h1 className="text-4xl font-bold text-white mb-2">kroolo</h1>
-          <p className="text-gray-300 text-lg">Sign in to your workspace</p>
+          <p className="text-gray-300 text-lg">
+            Sign in to your workspace
+          </p>
         </div>
 
         {/* Form Card */}
@@ -202,9 +201,12 @@ const App = () => {
           </form>
 
           <div className="mt-6 text-center">
-            <p className="text-gray-400 text-sm">
-              Enter your credentials to access the dashboard
-            </p>
+            <button
+              type="button"
+              className="text-blue-300 hover:text-blue-200 text-sm transition-colors"
+            >
+              Don't have an account? Create one
+            </button>
           </div>
         </div>
       </div>
