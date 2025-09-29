@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, MoreVertical, Users, Calendar, Layout } from 'lucide-react';
+import { Plus, MoreVertical, Users, Calendar, LayoutGrid as Layout } from 'lucide-react';
 import { Avatar } from '../ui/Avatar';
 import { AvatarList } from '../ui/AvatarList';
 
