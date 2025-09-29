@@ -105,6 +105,15 @@ const AuthPage = ({ domain }: AuthPageProps) => {
     }
   };
 
+  // Show loading spinner while checking authentication
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-white">Loading...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 flex items-center justify-center px-4">
       <div className="max-w-md w-full">
@@ -240,26 +249,21 @@ const AuthPage = ({ domain }: AuthPageProps) => {
               onClick={() => {
                 setIsSignUp(!isSignUp);
                 setError('');
-  // Show loading spinner while checking authentication
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="text-white">Loading...</div>
-      </div>
-    );
-  }
                 setPassword('');
                 setFullName('');
                 setCompanyName('');
+              }}
               className="text-blue-300 hover:text-blue-200 text-sm transition-colors"
             >
               {isSignUp 
                 ? 'Already have an account? Sign in' 
                 : "Don't have an account? Create one"
+              }
             </button>
           </div>
         </div>
       </div>
+    </div>
   );
 };
 
