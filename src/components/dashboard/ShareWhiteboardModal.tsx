@@ -1,257 +1,438 @@
-import React, { useState } from 'react';
-import { Layers3, Eye, EyeOff, Mail, User, Building } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Users, UserPlus, Trash2, Copy, Check } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../hooks/useAuth';
+import UserSearchDropdown from '../ui/UserSearchDropdown';
+import Avatar from '../ui/Avatar';
 
-interface AuthPageProps {
+interface User {
+  id: string;
+  full_name: string;
+  email: string;
+  avatar_url: string | null;
 }
 
-const AuthPage = ({ domain }: AuthPageProps) => {
-  const { setSelectedDomain } = useAuth();
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+interface Group {
+  id: string;
+  name: string;
+  description?: string;
+}
 
-  const isNewDomain = domain === 'new';
-  const [companyName, setCompanyName] = useState('');
+interface Share {
+  id: string;
+  user_id: string;
+  permission: 'editor' | 'viewer' | 'commenter';
+  user: User;
+}
 
-  const handleSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
+interface GroupShare {
+  id: string;
+  group_id: string;
+  permission: 'editor' | 'viewer' | 'commenter';
+  group: Group;
+}
 
+interface ShareWhiteboardModalProps {
+  whiteboardId: string;
+  onClose: () => void;
+}
+
+const ShareWhiteboardModal = ({ whiteboardId, onClose }: ShareWhiteboardModalProps) => {
+  const { profile } = useAuth();
+  const [shares, setShares] = useState<Share[]>([]);
+  const [groupShares, setGroupShares] = useState<GroupShare[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [inviteLink, setInviteLink] = useState('');
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<'users' | 'groups'>('users');
+
+  useEffect(() => {
+    loadData();
+  }, [whiteboardId]);
+
+  const loadData = async () => {
     try {
-      // Validate email domain matches selected domain (unless creating new)
-      if (!isNewDomain) {
-        const emailDomain = email.split('@')[1];
-        if (emailDomain !== domain) {
-          throw new Error(`Email must be from @${domain} domain`);
-        }
-      }
-
-      // Step 1: Create auth user
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-
-      if (authError) throw authError;
-      if (!authData.user) throw new Error('No user created');
-
-      // Step 2: Call edge function to create company and profile
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-company`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({
-          domain: isNewDomain ? email.split('@')[1] : domain,
-          displayName: isNewDomain ? companyName : domain,
-          userEmail: email,
-          userId: authData.user.id,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create company');
-      }
-
-      // Step 3: Sign in the user
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (signInError) throw signInError;
-
-    } catch (error: any) {
-      console.error('Sign up error:', error);
-      if (error.message === 'User already registered') {
-        setError('This email is already registered. Please switch to the "Sign In" tab.');
-      } else {
-        setError(error.message || 'Sign up failed');
-      }
+      await Promise.all([
+        loadShares(),
+        loadGroupShares(),
+        loadGroups(),
+        generateInviteLink()
+      ]);
+    } catch (error) {
+      console.error('Error loading share data:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
+  const loadShares = async () => {
+    const { data, error } = await supabase
+      .from('whiteboard_shares')
+      .select(`
+        *,
+        user:profiles!whiteboard_shares_user_id_fkey(id, full_name, email, avatar_url)
+      `)
+      .eq('whiteboard_id', whiteboardId);
 
+    if (error) throw error;
+    setShares(data || []);
+  };
+
+  const loadGroupShares = async () => {
+    const { data, error } = await supabase
+      .from('group_whiteboard_shares')
+      .select(`
+        *,
+        group:groups!group_whiteboard_shares_group_id_fkey(id, name, description)
+      `)
+      .eq('whiteboard_id', whiteboardId);
+
+    if (error) throw error;
+    setGroupShares(data || []);
+  };
+
+  const loadGroups = async () => {
+    if (!profile) return;
+
+    const { data, error } = await supabase
+      .from('groups')
+      .select('id, name, description')
+      .eq('domain_id', profile.domain_id)
+      .order('name');
+
+    if (error) throw error;
+    setGroups(data || []);
+  };
+
+  const generateInviteLink = async () => {
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      // Generate a unique token for the invite link
+      const token = crypto.randomUUID();
+      
+      const { error } = await supabase
+        .from('invite_tokens')
+        .insert({
+          token,
+          domain_id: profile?.domain_id,
+          whiteboard_id: whiteboardId,
+          permission: 'viewer',
+          expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
+          created_by: profile?.id
+        });
 
       if (error) throw error;
-
-    } catch (error: any) {
-      console.error('Sign in error:', error);
-      if (error.message === 'Invalid login credentials') {
-        setError('Invalid email or password. Please check your credentials or create an account if you haven\'t already.');
-      } else {
-        setError(error.message || 'Sign in failed');
-      }
-    } finally {
-      setLoading(false);
+      
+      setInviteLink(`${window.location.origin}/invite/${token}`);
+    } catch (error) {
+      console.error('Error generating invite link:', error);
     }
   };
 
+  const handleAddUser = async (user: User) => {
+    try {
+      const { error } = await supabase
+        .from('whiteboard_shares')
+        .insert({
+          whiteboard_id: whiteboardId,
+          user_id: user.id,
+          permission: 'viewer'
+        });
+
+      if (error) throw error;
+      await loadShares();
+    } catch (error) {
+      console.error('Error adding user:', error);
+    }
+  };
+
+  const handleAddGroup = async (groupId: string) => {
+    try {
+      const { error } = await supabase
+        .from('group_whiteboard_shares')
+        .insert({
+          whiteboard_id: whiteboardId,
+          group_id: groupId,
+          permission: 'viewer'
+        });
+
+      if (error) throw error;
+      await loadGroupShares();
+    } catch (error) {
+      console.error('Error adding group:', error);
+    }
+  };
+
+  const handleUpdatePermission = async (shareId: string, permission: string, isGroup = false) => {
+    try {
+      const table = isGroup ? 'group_whiteboard_shares' : 'whiteboard_shares';
+      const { error } = await supabase
+        .from(table)
+        .update({ permission })
+        .eq('id', shareId);
+
+      if (error) throw error;
+      
+      if (isGroup) {
+        await loadGroupShares();
+      } else {
+        await loadShares();
+      }
+    } catch (error) {
+      console.error('Error updating permission:', error);
+    }
+  };
+
+  const handleRemoveShare = async (shareId: string, isGroup = false) => {
+    try {
+      const table = isGroup ? 'group_whiteboard_shares' : 'whiteboard_shares';
+      const { error } = await supabase
+        .from(table)
+        .delete()
+        .eq('id', shareId);
+
+      if (error) throw error;
+      
+      if (isGroup) {
+        await loadGroupShares();
+      } else {
+        await loadShares();
+      }
+    } catch (error) {
+      console.error('Error removing share:', error);
+    }
+  };
+
+  const copyInviteLink = async () => {
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch (error) {
+      console.error('Error copying link:', error);
+    }
+  };
+
+  const getPermissionColor = (permission: string) => {
+    switch (permission) {
+      case 'editor': return 'text-green-400';
+      case 'commenter': return 'text-yellow-400';
+      default: return 'text-blue-400';
+    }
+  };
+
+  const excludedUserIds = shares.map(share => share.user_id);
+  const availableGroups = groups.filter(group => 
+    !groupShares.some(gs => gs.group_id === group.id)
+  );
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 flex items-center justify-center px-4">
-      <div className="max-w-md w-full">
-        {/* Logo and Header */}
-        <div className="text-center mb-8">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-800 rounded-lg w-full max-w-2xl max-h-[90vh] overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-700">
+          <h2 className="text-xl font-semibold text-white">Share Whiteboard</h2>
           <button
-            onClick={() => setSelectedDomain(null)}
-            className="mb-4 text-blue-300 hover:text-blue-200 text-sm transition-colors"
+            onClick={onClose}
+            className="text-gray-400 hover:text-white transition-colors"
           >
-            ← Back to domain selection
+            <X className="h-5 w-5" />
           </button>
-          <div className="flex items-center justify-center mb-6">
-            <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-2xl">
-              <Layers3 className="h-8 w-8 text-white" />
-            </div>
-          </div>
-          <h1 className="text-4xl font-bold text-white mb-2">kroolo</h1>
-          <p className="text-gray-300 text-lg">
-            {isSignUp 
-              ? (isNewDomain ? 'Create your workspace' : `Join ${domain}`)
-              : `Sign in to ${domain === 'new' ? 'your workspace' : domain}`
-            }
-          </p>
         </div>
 
-        {/* Form Card */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 shadow-2xl border border-white/20">
-          <form onSubmit={isSignUp ? handleSignUp : handleSignIn} className="space-y-6">
-            {error && (
-              <div className="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded-lg text-sm">
-                {error}
-              </div>
-            )}
+        <div className="overflow-y-auto max-h-[calc(90vh-80px)]">
+          {/* Invite Link */}
+          <div className="p-6 border-b border-gray-700">
+            <h3 className="text-lg font-medium text-white mb-3">Invite Link</h3>
+            <div className="flex items-center space-x-2">
+              <input
+                type="text"
+                value={inviteLink}
+                readOnly
+                className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm"
+              />
+              <button
+                onClick={copyInviteLink}
+                className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center space-x-1"
+              >
+                {linkCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                <span className="text-sm">{linkCopied ? 'Copied!' : 'Copy'}</span>
+              </button>
+            </div>
+            <p className="text-gray-400 text-sm mt-2">
+              Anyone with this link can view the whiteboard
+            </p>
+          </div>
 
-            {isSignUp && (
-              <>
-                <div className="space-y-2">
-                  <label className="text-white text-sm font-medium flex items-center space-x-2">
-                    <User className="h-4 w-4" />
-                    <span>Full Name</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
-                    placeholder="John Doe"
+          {/* Tabs */}
+          <div className="flex border-b border-gray-700">
+            <button
+              onClick={() => setActiveTab('users')}
+              className={`flex-1 px-6 py-3 text-sm font-medium transition-colors ${
+                activeTab === 'users'
+                  ? 'text-blue-400 border-b-2 border-blue-400'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Users className="h-4 w-4 inline mr-2" />
+              Users ({shares.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('groups')}
+              className={`flex-1 px-6 py-3 text-sm font-medium transition-colors ${
+                activeTab === 'groups'
+                  ? 'text-blue-400 border-b-2 border-blue-400'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Users className="h-4 w-4 inline mr-2" />
+              Groups ({groupShares.length})
+            </button>
+          </div>
+
+          <div className="p-6">
+            {activeTab === 'users' ? (
+              <div className="space-y-4">
+                {/* Add User */}
+                <div>
+                  <h4 className="text-white font-medium mb-3">Add People</h4>
+                  <UserSearchDropdown
+                    onSelect={handleAddUser}
+                    excludeIds={excludedUserIds}
+                    placeholder="Search for users to add..."
                   />
                 </div>
 
-                {isNewDomain && (
-                  <div className="space-y-2">
-                    <label className="text-white text-sm font-medium flex items-center space-x-2">
-                      <Building className="h-4 w-4" />
-                      <span>Company Name</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={companyName}
-                      onChange={(e) => setCompanyName(e.target.value)}
-                      className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
-                      placeholder="Acme Corporation"
-                    />
+                {/* Current Shares */}
+                {shares.length > 0 && (
+                  <div>
+                    <h4 className="text-white font-medium mb-3">Current Access</h4>
+                    <div className="space-y-3">
+                      {shares.map(share => (
+                        <div key={share.id} className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                          <div className="flex items-center space-x-3">
+                            <Avatar
+                              src={share.user.avatar_url}
+                              name={share.user.full_name}
+                              size="sm"
+                            />
+                            <div>
+                              <div className="text-white font-medium">
+                                {share.user.full_name}
+                              </div>
+                              <div className="text-gray-400 text-sm">
+                                {share.user.email}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <select
+                              value={share.permission}
+                              onChange={(e) => handleUpdatePermission(share.id, e.target.value)}
+                              className={`bg-gray-600 border border-gray-500 rounded px-2 py-1 text-sm ${getPermissionColor(share.permission)}`}
+                            >
+                              <option value="viewer">Viewer</option>
+                              <option value="commenter">Commenter</option>
+                              <option value="editor">Editor</option>
+                            </select>
+                            <button
+                              onClick={() => handleRemoveShare(share.id)}
+                              className="text-red-400 hover:text-red-300 p-1"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
-              </>
-            )}
-
-            <div className="space-y-2">
-              <label className="text-white text-sm font-medium flex items-center space-x-2">
-                <Mail className="h-4 w-4" />
-                <span>Email Address</span>
-              </label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
-                placeholder={isNewDomain ? "john@company.com" : `john@${domain}`}
-              />
-              {!isNewDomain && (
-                <p className="text-gray-400 text-sm">
-                  Must be an @{domain} email address
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-white text-sm font-medium">Password</label>
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm pr-12"
-                  placeholder="Enter your password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-300 hover:text-white transition-colors"
-                >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Add Group */}
+                {availableGroups.length > 0 && (
+                  <div>
+                    <h4 className="text-white font-medium mb-3">Add Groups</h4>
+                    <div className="space-y-2">
+                      {availableGroups.map(group => (
+                        <button
+                          key={group.id}
+                          onClick={() => handleAddGroup(group.id)}
+                          className="w-full flex items-center justify-between p-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+                        >
+                          <div className="flex items-center space-x-3">
+                            <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-blue-600 rounded-lg flex items-center justify-center">
+                              <Users className="h-4 w-4 text-white" />
+                            </div>
+                            <div className="text-left">
+                              <div className="text-white font-medium">{group.name}</div>
+                              {group.description && (
+                                <div className="text-gray-400 text-sm">{group.description}</div>
+                              )}
+                            </div>
+                          </div>
+                          <UserPlus className="h-4 w-4 text-gray-400" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
-            >
-              {loading ? (
-                <div className="flex items-center justify-center space-x-2">
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                  <span>Processing...</span>
-                </div>
-              ) : (
-                isSignUp 
-                  ? (isNewDomain ? 'Create Workspace' : `Join ${domain}`)
-                  : 'Sign In'
-              )}
-            </button>
-          </form>
+                {/* Current Group Shares */}
+                {groupShares.length > 0 && (
+                  <div>
+                    <h4 className="text-white font-medium mb-3">Groups with Access</h4>
+                    <div className="space-y-3">
+                      {groupShares.map(groupShare => (
+                        <div key={groupShare.id} className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-blue-600 rounded-lg flex items-center justify-center">
+                              <Users className="h-4 w-4 text-white" />
+                            </div>
+                            <div>
+                              <div className="text-white font-medium">
+                                {groupShare.group.name}
+                              </div>
+                              {groupShare.group.description && (
+                                <div className="text-gray-400 text-sm">
+                                  {groupShare.group.description}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <select
+                              value={groupShare.permission}
+                              onChange={(e) => handleUpdatePermission(groupShare.id, e.target.value, true)}
+                              className={`bg-gray-600 border border-gray-500 rounded px-2 py-1 text-sm ${getPermissionColor(groupShare.permission)}`}
+                            >
+                              <option value="viewer">Viewer</option>
+                              <option value="commenter">Commenter</option>
+                              <option value="editor">Editor</option>
+                            </select>
+                            <button
+                              onClick={() => handleRemoveShare(groupShare.id, true)}
+                              className="text-red-400 hover:text-red-300 p-1"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-          <div className="mt-6 text-center">
-            <button
-              type="button"
-              onClick={() => {
-                setIsSignUp(!isSignUp);
-                setError('');
-                setEmail('');
-                setPassword('');
-                setFullName('');
-                setCompanyName('');
-              }}
-              className="text-blue-300 hover:text-blue-200 text-sm transition-colors"
-            >
-              {isSignUp 
-                ? 'Already have an account? Sign in' 
-                : "Don't have an account? Create one"
-              }
-            </button>
+                {availableGroups.length === 0 && groupShares.length === 0 && (
+                  <div className="text-center text-gray-400 py-8">
+                    <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No groups available</p>
+                    <p className="text-sm">Create groups to share with teams</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -259,4 +440,4 @@ const AuthPage = ({ domain }: AuthPageProps) => {
   );
 };
 
-export default AuthPage;
+export default ShareWhiteboardModal;
