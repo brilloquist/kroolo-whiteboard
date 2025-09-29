@@ -50,17 +50,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       console.log('Fetching profile for user:', userId);
       
-      const { data: profileData, error } = await supabase
+      const { data: profileData, error: profileError } = await supabase
         .from('profiles')
-        .select(`
-          *,
-          domains (*)
-        `)
+        .select('*')
         .eq('id', userId)
         .maybeSingle();
 
-      if (error) {
-        console.error('Profile fetch error:', error);
+      if (profileError) {
+        console.error('Profile fetch error:', profileError);
         return;
       }
 
@@ -71,7 +68,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
       console.log('Profile fetched successfully:', profileData);
       setProfile(profileData);
-      setDomain(profileData.domains || null);
+      
+      // Fetch domain separately
+      const { data: domainData, error: domainError } = await supabase
+        .from('domains')
+        .select('*')
+        .eq('id', profileData.domain_id)
+        .single();
+
+      if (domainError) {
+        console.error('Domain fetch error:', domainError);
+      } else {
+        setDomain(domainData);
+      }
     } catch (error) {
       console.error('Profile fetch exception:', error);
     }
