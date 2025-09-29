@@ -101,7 +101,11 @@ const AuthPage = () => {
 
     } catch (error: any) {
       console.error('Sign in error:', error);
-      setError(error.message || 'Sign in failed');
+      if (error.message === 'Invalid login credentials') {
+        setError('Invalid email or password. Please check your credentials or create an account if you haven\'t already.');
+      } else {
+        setError(error.message || 'Sign in failed');
+      }
     } finally {
       setLoading(false);
     }
