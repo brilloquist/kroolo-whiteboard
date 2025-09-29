@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { Layers3, Eye, EyeOff, Mail, User, Building } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth';
+import { supabase } from '../lib/supabase';
 
 interface AuthPageProps {
+  domain: string;
 }
 
 const AuthPage = ({ domain }: AuthPageProps) => {

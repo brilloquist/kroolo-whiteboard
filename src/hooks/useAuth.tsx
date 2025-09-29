@@ -1,21 +1,16 @@
 import React, { useState } from 'react';
 import { Layers3, Eye, EyeOff, Mail, User, Building } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
 
-interface AuthPageProps {
-}
-
-const AuthPage = ({ domain }: AuthPageProps) => {
-  const { setSelectedDomain } = useAuth();
+const AuthPage = () => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
-  const isNewDomain = domain === 'new';
-  const [companyName, setCompanyName] = useState('');
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,14 +18,6 @@ const AuthPage = ({ domain }: AuthPageProps) => {
     setError('');
 
     try {
-      // Validate email domain matches selected domain (unless creating new)
-      if (!isNewDomain) {
-        const emailDomain = email.split('@')[1];
-        if (emailDomain !== domain) {
-          throw new Error(`Email must be from @${domain} domain`);
-        }
-      }
-
       // Step 1: Create auth user
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
@@ -40,27 +27,46 @@ const AuthPage = ({ domain }: AuthPageProps) => {
       if (authError) throw authError;
       if (!authData.user) throw new Error('No user created');
 
-      // Step 2: Call edge function to create company and profile
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-company`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({
-          domain: isNewDomain ? email.split('@')[1] : domain,
-          displayName: isNewDomain ? companyName : domain,
-          userEmail: email,
-          userId: authData.user.id,
-        }),
-      });
+      // Step 2: Create or get domain
+      const domainName = companyName.toLowerCase().replace(/\s+/g, '-');
+      
+      let domainId: string;
+      const { data: existingDomain } = await supabase
+        .from('domains')
+        .select('id')
+        .eq('name', domainName)
+        .maybeSingle();
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create company');
+      if (existingDomain) {
+        domainId = existingDomain.id;
+      } else {
+        const { data: newDomain, error: domainError } = await supabase
+          .from('domains')
+          .insert({
+            name: domainName,
+            display_name: companyName,
+          })
+          .select('id')
+          .single();
+
+        if (domainError) throw domainError;
+        domainId = newDomain.id;
       }
 
-      // Step 3: Sign in the user
+      // Step 3: Create profile
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .insert({
+          id: authData.user.id,
+          domain_id: domainId,
+          email,
+          full_name: fullName,
+          role: 'member',
+        });
+
+      if (profileError) throw profileError;
+
+      // Step 4: Sign in the user
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -110,12 +116,6 @@ const AuthPage = ({ domain }: AuthPageProps) => {
       <div className="max-w-md w-full">
         {/* Logo and Header */}
         <div className="text-center mb-8">
-          <button
-            onClick={() => setSelectedDomain(null)}
-            className="mb-4 text-blue-300 hover:text-blue-200 text-sm transition-colors"
-          >
-            ← Back to domain selection
-          </button>
           <div className="flex items-center justify-center mb-6">
             <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-2xl">
               <Layers3 className="h-8 w-8 text-white" />
@@ -123,10 +123,7 @@ const AuthPage = ({ domain }: AuthPageProps) => {
           </div>
           <h1 className="text-4xl font-bold text-white mb-2">kroolo</h1>
           <p className="text-gray-300 text-lg">
-            {isSignUp 
-              ? (isNewDomain ? 'Create your workspace' : `Join ${domain}`)
-              : `Sign in to ${domain === 'new' ? 'your workspace' : domain}`
-            }
+            {isSignUp ? 'Create your workspace' : 'Welcome back'}
           </p>
         </div>
 
@@ -156,22 +153,20 @@ const AuthPage = ({ domain }: AuthPageProps) => {
                   />
                 </div>
 
-                {isNewDomain && (
-                  <div className="space-y-2">
-                    <label className="text-white text-sm font-medium flex items-center space-x-2">
-                      <Building className="h-4 w-4" />
-                      <span>Company Name</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={companyName}
-                      onChange={(e) => setCompanyName(e.target.value)}
-                      className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
-                      placeholder="Acme Corporation"
-                    />
-                  </div>
-                )}
+                <div className="space-y-2">
+                  <label className="text-white text-sm font-medium flex items-center space-x-2">
+                    <Building className="h-4 w-4" />
+                    <span>Company Name</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
+                    placeholder="Acme Corporation"
+                  />
+                </div>
               </>
             )}
 
@@ -186,13 +181,8 @@ const AuthPage = ({ domain }: AuthPageProps) => {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
-                placeholder={isNewDomain ? "john@company.com" : `john@${domain}`}
+                placeholder="john@company.com"
               />
-              {!isNewDomain && (
-                <p className="text-gray-400 text-sm">
-                  Must be an @{domain} email address
-                </p>
-              )}
             </div>
 
             <div className="space-y-2">
@@ -227,9 +217,7 @@ const AuthPage = ({ domain }: AuthPageProps) => {
                   <span>Processing...</span>
                 </div>
               ) : (
-                isSignUp 
-                  ? (isNewDomain ? 'Create Workspace' : `Join ${domain}`)
-                  : 'Sign In'
+                isSignUp ? 'Create Workspace' : 'Sign In'
               )}
             </button>
           </form>
