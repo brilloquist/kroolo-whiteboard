@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
-export interface Profile {
+interface Profile {
   id: string;
   domain_id: string;
   email: string;
@@ -13,7 +13,7 @@ export interface Profile {
   updated_at: string;
 }
 
-export interface Domain {
+interface Domain {
   id: string;
   name: string;
   display_name: string;
@@ -25,11 +25,11 @@ interface AuthContextType {
   user: User | null;
   profile: Profile | null;
   domain: Domain | null;
+  loading: boolean;
+  needsOnboarding: boolean;
   selectedDomain: string | null;
   setSelectedDomain: (domain: string | null) => void;
-  loading: boolean;
   signOut: () => Promise<void>;
-  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -38,11 +38,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [domain, setDomain] = useState<Domain | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
-  const fetchProfile = async (userId: string) => {
+  useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        loadUserProfile(session.user.id);
+      } else {
+        setLoading(false);
+      }
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      setUser(session?.user ?? null);
+      
+      if (session?.user) {
+        await loadUserProfile(session.user.id);
+      } else {
+        setProfile(null);
+        setDomain(null);
+        setNeedsOnboarding(false);
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const loadUserProfile = async (userId: string) => {
     try {
+      // Load profile with domain information
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select(`
@@ -52,18 +82,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .eq('id', userId)
         .single();
 
-      if (profileError) throw profileError;
+      if (profileError) {
+        console.error('Error loading profile:', profileError);
+        // User might need onboarding if profile doesn't exist
+        setNeedsOnboarding(true);
+        setLoading(false);
+        return;
+      }
 
       setProfile(profileData);
       setDomain(profileData.domains);
+      setNeedsOnboarding(false);
     } catch (error) {
-      console.error('Error fetching profile:', error);
-    }
-  };
-
-  const refreshProfile = async () => {
-    if (user) {
-      await fetchProfile(user.id);
+      console.error('Error in loadUserProfile:', error);
+      setNeedsOnboarding(true);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -72,55 +106,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setProfile(null);
     setDomain(null);
+    setNeedsOnboarding(false);
     setSelectedDomain(null);
   };
 
-  useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      }
-    });
-
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        await fetchProfile(session.user.id);
-      } else {
-        setProfile(null);
-        setDomain(null);
-        setSelectedDomain(null);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
+  const value: AuthContextType = {
+    user,
+    profile,
+    domain,
+    loading,
+    needsOnboarding,
+    selectedDomain,
+    setSelectedDomain,
+    signOut,
+  };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        profile,
-        domain,
-        selectedDomain,
-        setSelectedDomain,
-        loading,
-        signOut,
-        refreshProfile,
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
 };
 
-export const useAuth = () => {
+export const useAuth = (): AuthContextType => {
   const context = useContext(AuthContext);
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
