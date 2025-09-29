@@ -6,12 +6,16 @@ import Dashboard from './components/dashboard/Dashboard';
 const AppContent = () => {
   const { user, profile } = useAuth();
 
+  console.log('AppContent render - user:', !!user, 'profile:', !!profile);
+
   // Show dashboard if user is authenticated and has profile
   if (user && profile) {
+    console.log('Showing dashboard');
     return <Dashboard />;
   }
 
   // Show auth page for unauthenticated users or users without profile
+  console.log('Showing auth page');
   return <AuthPage />;
 };
 

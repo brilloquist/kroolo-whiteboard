@@ -57,21 +57,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           domains (*)
         `)
         .eq('id', userId)
-        .maybeSingle();
+        .single();
 
       if (error) {
         console.error('Profile fetch error:', error);
         return;
       }
 
-      if (!profileData) {
-        console.log('No profile found for user:', userId);
-        return;
-      }
 
       console.log('Profile fetched successfully:', profileData);
       setProfile(profileData);
-      setDomain(profileData?.domains || null);
+      setDomain(profileData.domains || null);
     } catch (error) {
       console.error('Profile fetch exception:', error);
     }
