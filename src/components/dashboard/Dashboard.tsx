@@ -1,311 +1,265 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { Layers3, Eye, EyeOff, Mail, User, Building } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
-import Sidebar from './Sidebar';
-import WhiteboardGrid from './WhiteboardGrid';
-import GroupsSection from './GroupsSection';
-import CreateWhiteboardModal from './CreateWhiteboardModal';
-import ShareWhiteboardModal from './ShareWhiteboardModal';
-import CreateGroupModal from './CreateGroupModal';
 import { supabase } from '../../lib/supabase';
 
-export interface Whiteboard {
-  id: string;
-  title: string;
-  description: string;
-  owner_id: string;
-  domain_id: string;
-  data: Record<string, any>;
-  created_at: string;
-  updated_at: string;
-  owner?: {
-    id: string;
-    full_name: string;
-    avatar_url: string | null;
-  };
-  collaborators?: Array<{
-    id: string;
-    full_name: string;
-    avatar_url: string | null;
-    permission: 'editor' | 'viewer' | 'commenter';
-  }>;
+interface AuthPageProps {
+  domain: string;
 }
 
-export interface Group {
-  id: string;
-  name: string;
-  description: string;
-  domain_id: string;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-  member_count?: number;
-}
+const AuthPage = ({ domain }: AuthPageProps) => {
+  const { setSelectedDomain } = useAuth();
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-const Dashboard = () => {
-  const { profile, domain, signOut } = useAuth();
-  const [whiteboards, setWhiteboards] = useState<Whiteboard[]>([]);
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('whiteboards');
-  
-  // Modal states
-  const [showCreateWhiteboard, setShowCreateWhiteboard] = useState(false);
-  const [showCreateGroup, setShowCreateGroup] = useState(false);
-  const [shareWhiteboardId, setShareWhiteboardId] = useState<string | null>(null);
+  const isNewDomain = domain === 'new';
+  const [companyName, setCompanyName] = useState('');
 
-  const fetchWhiteboards = async () => {
-    if (!profile) return;
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
 
     try {
-      const { data, error } = await supabase
-        .from('whiteboards')
-        .select(`
-          *,
-          profiles:owner_id (
-            id,
-            full_name,
-            avatar_url
-          ),
-          whiteboard_shares (
-            user_id,
-            permission,
-            profiles (
-              id,
-              full_name,
-              avatar_url
-            )
-          )
-        `)
-        .eq('domain_id', profile.domain_id)
-        .order('updated_at', { ascending: false });
+      // Validate email domain matches selected domain (unless creating new)
+      if (!isNewDomain) {
+        const emailDomain = email.split('@')[1];
+        if (emailDomain !== domain) {
+          throw new Error(`Email must be from @${domain} domain`);
+        }
+      }
 
-      if (error) throw error;
+      // Step 1: Create auth user
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+      });
 
-      const whiteboardsWithCollaborators = data.map(whiteboard => ({
-        ...whiteboard,
-        owner: whiteboard.profiles,
-        collaborators: whiteboard.whiteboard_shares.map((share: any) => ({
-          ...share.profiles,
-          permission: share.permission,
-        })),
-      }));
+      if (authError) throw authError;
+      if (!authData.user) throw new Error('No user created');
 
-      setWhiteboards(whiteboardsWithCollaborators);
-    } catch (error) {
-      console.error('Error fetching whiteboards:', error);
-    }
-  };
+      // Step 2: Call edge function to create company and profile
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-company`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          domain: isNewDomain ? email.split('@')[1] : domain,
+          displayName: isNewDomain ? companyName : domain,
+          userEmail: email,
+          userId: authData.user.id,
+        }),
+      });
 
-  const fetchGroups = async () => {
-    if (!profile) return;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create company');
+      }
 
-    try {
-      const { data, error } = await supabase
-        .from('groups')
-        .select(`
-          *,
-          group_members (count)
-        `)
-        .eq('domain_id', profile.domain_id)
-        .order('created_at', { ascending: false });
+      // Step 3: Sign in the user
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-      if (error) throw error;
+      if (signInError) throw signInError;
 
-      const groupsWithCounts = data.map(group => ({
-        ...group,
-        member_count: group.group_members?.[0]?.count || 0,
-      }));
-
-      setGroups(groupsWithCounts);
-    } catch (error) {
-      console.error('Error fetching groups:', error);
-    }
-  };
-
-  const handleCreateWhiteboard = async (title: string, description: string) => {
-    if (!profile) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('whiteboards')
-        .insert({
-          title,
-          description,
-          owner_id: profile.id,
-          domain_id: profile.domain_id,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      await fetchWhiteboards();
-      setShowCreateWhiteboard(false);
-    } catch (error) {
-      console.error('Error creating whiteboard:', error);
-    }
-  };
-
-  const handleDeleteWhiteboard = async (whiteboardId: string) => {
-    try {
-      const { error } = await supabase
-        .from('whiteboards')
-        .delete()
-        .eq('id', whiteboardId);
-
-      if (error) throw error;
-
-      setWhiteboards(whiteboards.filter(wb => wb.id !== whiteboardId));
-    } catch (error) {
-      console.error('Error deleting whiteboard:', error);
-    }
-  };
-
-  const handleCreateGroup = async (name: string, description: string) => {
-    if (!profile) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('groups')
-        .insert({
-          name,
-          description,
-          domain_id: profile.domain_id,
-          created_by: profile.id,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      await fetchGroups();
-      setShowCreateGroup(false);
-    } catch (error) {
-      console.error('Error creating group:', error);
-    }
-  };
-
-  useEffect(() => {
-    const loadData = async () => {
-      if (!profile) return;
-      
-      setLoading(true);
-      await Promise.all([fetchWhiteboards(), fetchGroups()]);
+    } catch (error: any) {
+      console.error('Sign up error:', error);
+      if (error.message === 'User already registered') {
+        setError('This email is already registered. Please switch to the "Sign In" tab.');
+      } else {
+        setError(error.message || 'Sign up failed');
+      }
+    } finally {
       setLoading(false);
-    };
+    }
+  };
 
-    loadData();
-  }, [profile]);
+  const handleSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
 
-  if (!profile || !domain) {
-    return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="text-white">Loading...</div>
-      </div>
-    );
-  }
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+
+    } catch (error: any) {
+      console.error('Sign in error:', error);
+      if (error.message === 'Invalid login credentials') {
+        setError('Invalid email or password. Please check your credentials or create an account if you haven\'t already.');
+      } else {
+        setError(error.message || 'Sign in failed');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-gray-900 flex">
-      <Sidebar 
-        profile={profile}
-        domain={domain}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        onSignOut={signOut}
-      />
-      
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold text-white capitalize">
-                {activeTab}
-              </h1>
-              <p className="text-gray-400 mt-1">
-                {activeTab === 'whiteboards' 
-                  ? 'Manage your whiteboards and collaborate with your team'
-                  : 'Organize your team into groups for easier collaboration'
-                }
-              </p>
-            </div>
-            
-            <div className="flex items-center space-x-3">
-              {activeTab === 'whiteboards' && (
-                <button
-                  onClick={() => setShowCreateWhiteboard(true)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2 shadow-lg hover:shadow-xl"
-                >
-                  <span>+</span>
-                  <span>Create Whiteboard</span>
-                </button>
-              )}
-              
-              {activeTab === 'groups' && (
-                <button
-                  onClick={() => setShowCreateGroup(true)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2 shadow-lg hover:shadow-xl"
-                >
-                  <span>+</span>
-                  <span>Create Group</span>
-                </button>
-              )}
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 flex items-center justify-center px-4">
+      <div className="max-w-md w-full">
+        {/* Logo and Header */}
+        <div className="text-center mb-8">
+          <button
+            onClick={() => setSelectedDomain(null)}
+            className="mb-4 text-blue-300 hover:text-blue-200 text-sm transition-colors"
+          >
+            ← Back to domain selection
+          </button>
+          <div className="flex items-center justify-center mb-6">
+            <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-2xl">
+              <Layers3 className="h-8 w-8 text-white" />
             </div>
           </div>
-        </header>
-
-        {/* Content */}
-        <div className="flex-1 p-6 overflow-y-auto">
-          {loading ? (
-            <div className="flex items-center justify-center h-64">
-              <div className="text-gray-400">Loading...</div>
-            </div>
-          ) : (
-            <>
-              {activeTab === 'whiteboards' && (
-                <WhiteboardGrid
-                  whiteboards={whiteboards}
-                  currentUserId={profile.id}
-                  onShare={setShareWhiteboardId}
-                  onDelete={handleDeleteWhiteboard}
-                />
-              )}
-              
-              {activeTab === 'groups' && (
-                <GroupsSection
-                  groups={groups}
-                  currentUserId={profile.id}
-                />
-              )}
-            </>
-          )}
+          <h1 className="text-4xl font-bold text-white mb-2">kroolo</h1>
+          <p className="text-gray-300 text-lg">
+            {isSignUp 
+              ? (isNewDomain ? 'Create your workspace' : `Join ${domain}`)
+              : `Sign in to ${domain === 'new' ? 'your workspace' : domain}`
+            }
+          </p>
         </div>
-      </main>
 
-      {/* Modals */}
-      {showCreateWhiteboard && (
-        <CreateWhiteboardModal
-          onClose={() => setShowCreateWhiteboard(false)}
-          onCreate={handleCreateWhiteboard}
-        />
-      )}
+        {/* Form Card */}
+        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 shadow-2xl border border-white/20">
+          <form onSubmit={isSignUp ? handleSignUp : handleSignIn} className="space-y-6">
+            {error && (
+              <div className="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
 
-      {showCreateGroup && (
-        <CreateGroupModal
-          onClose={() => setShowCreateGroup(false)}
-          onCreate={handleCreateGroup}
-        />
-      )}
+            {isSignUp && (
+              <>
+                <div className="space-y-2">
+                  <label className="text-white text-sm font-medium flex items-center space-x-2">
+                    <User className="h-4 w-4" />
+                    <span>Full Name</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
+                    placeholder="John Doe"
+                  />
+                </div>
 
-      {shareWhiteboardId && (
-        <ShareWhiteboardModal
-          whiteboardId={shareWhiteboardId}
-          onClose={() => setShareWhiteboardId(null)}
-        />
-      )}
+                {isNewDomain && (
+                  <div className="space-y-2">
+                    <label className="text-white text-sm font-medium flex items-center space-x-2">
+                      <Building className="h-4 w-4" />
+                      <span>Company Name</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                      className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
+                      placeholder="Acme Corporation"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="space-y-2">
+              <label className="text-white text-sm font-medium flex items-center space-x-2">
+                <Mail className="h-4 w-4" />
+                <span>Email Address</span>
+              </label>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm"
+                placeholder={isNewDomain ? "john@company.com" : `john@${domain}`}
+              />
+              {!isNewDomain && (
+                <p className="text-gray-400 text-sm">
+                  Must be an @{domain} email address
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-white text-sm font-medium">Password</label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm pr-12"
+                  placeholder="Enter your password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-300 hover:text-white transition-colors"
+                >
+                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg"
+            >
+              {loading ? (
+                <div className="flex items-center justify-center space-x-2">
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  <span>Processing...</span>
+                </div>
+              ) : (
+                isSignUp 
+                  ? (isNewDomain ? 'Create Workspace' : `Join ${domain}`)
+                  : 'Sign In'
+              )}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button
+              type="button"
+              onClick={() => {
+                setIsSignUp(!isSignUp);
+                setError('');
+                setEmail('');
+                setPassword('');
+                setFullName('');
+                setCompanyName('');
+              }}
+              className="text-blue-300 hover:text-blue-200 text-sm transition-colors"
+            >
+              {isSignUp 
+                ? 'Already have an account? Sign in' 
+                : "Don't have an account? Create one"
+              }
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
 
-export default Dashboard;
+export default AuthPage;
